@@ -1,0 +1,37 @@
+# Python virtualenv
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+
+# Environment files
+backend/.env
+backend/.env.example
+.env
+
+# Byte-compiled / optimized
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+backend/dist/
+backend/build/
+backend/*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude.md
+CLAUDE.md
+Makefile
+files
+files/*
