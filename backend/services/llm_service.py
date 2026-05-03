@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class OllamaService:
     def __init__(self) -> None:
         self.base_url: str = os.getenv("OLLAMA_API_URL", "http://localhost:11434").rstrip("/")
-        self.model: str = os.getenv("LLM_MODEL", "llama2:7b")
+        self.model: str = os.getenv("LLM_MODEL", "mistral:7b")
 
     async def check_availability(self) -> bool:
         try:
@@ -24,13 +24,16 @@ class OllamaService:
             logger.warning("Ollama availability check failed: %s", exc)
             return False
 
-    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def generate_stream(self, messages: list[dict], system: str = "") -> AsyncGenerator[str, None]:
+        payload: dict = {"model": self.model, "messages": messages, "stream": True}
+        if system:
+            payload["system"] = system
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 async with client.stream(
                     "POST",
-                    f"{self.base_url}/api/generate",
-                    json={"model": self.model, "prompt": prompt, "stream": True},
+                    f"{self.base_url}/api/chat",
+                    json=payload,
                 ) as response:
                     if response.status_code != 200:
                         raise LLMStreamError(f"Ollama returned HTTP {response.status_code}")
@@ -42,7 +45,7 @@ class OllamaService:
                         except json.JSONDecodeError as exc:
                             logger.warning("Skipping unparseable line: %s | %s", line, exc)
                             continue
-                        token: str = data.get("response", "")
+                        token: str = data.get("message", {}).get("content", "")
                         if token:
                             yield token
                         if data.get("done", False):

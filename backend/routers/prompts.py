@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List, Dict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -18,112 +18,170 @@ llm_service = OllamaService()
 MAX_RETRIES = 2
 
 
-_FOCUS_MAP: dict[str, str] = {
-    "security": (
-        "Prioritize security hardening, OWASP top 10, authentication, authorization, "
-        "data protection, input validation, and vulnerability prevention."
-    ),
-    "performance": (
-        "Prioritize performance optimization, efficiency, caching strategies, "
-        "resource management, and measurable speed improvements."
-    ),
-    "best_practices": (
-        "Prioritize clean code, maintainability, consistent architecture, "
-        "design patterns, and long-term readability."
-    ),
-}
+# =========================
+# IMMUTABLE SYSTEM POLICY
+# =========================
+SYSTEM_MESSAGE = (
+    "You are Goto-prompt.\n\n"
+
+    "ROLE:\n"
+    "- You generate system prompts for AI assistants.\n\n"
+
+    "STRICT MODES (choose exactly one):\n"
+    "1. GENERATE → output ONLY final system prompt\n"
+    "2. CLARIFY → ask up to 2 questions only\n"
+    "3. REFINE → rewrite and output ONLY updated prompt\n\n"
+
+    "HARD RULES:\n"
+    "- No explanations\n"
+    "- No markdown\n"
+    "- No labels\n"
+    "- No extra text outside required output\n"
+    "- Do NOT mention modes\n\n"
+
+    "OUTPUT FORMAT (MANDATORY):\n"
+    "[GENERATE]\n<system prompt>\n\n"
+    "[CLARIFY]\n- question 1\n- question 2\n\n"
+    "[REFINE]\n<updated prompt>\n"
+)
 
 
-def _build_system_prompt(request: PromptGenerationRequest) -> str:
-    if request.focus == "custom" and request.custom_focus:
-        focus_clause = f"Key focus: {request.custom_focus.strip()}"
-    elif request.focus in _FOCUS_MAP:
-        focus_clause = f"Key focus: {_FOCUS_MAP[request.focus]}"
-    else:
-        focus_clause = ""
+# =========================
+# MODE CONTROL (SERVER-SIDE)
+# =========================
+def classify_mode(user_message: str) -> str:
+    text = user_message.lower()
 
-    if request.conversation_context:
-        task_block = (
-            f"Previous generated prompt (refine this):\n{request.conversation_context}"
-            f"\n\nRefinement request: {request.user_message}"
-        )
-    else:
-        task_block = f"Task: {request.user_message}"
+    if any(k in text for k in ["rewrite", "refine", "edit", "improve"]):
+        return "REFINE"
 
-    parts = [
-        "You are an expert prompt engineer. Create a comprehensive, production-ready system prompt.",
-        "",
-        task_block,
-    ]
-    if focus_clause:
-        parts.append(focus_clause)
-    parts += [
-        "",
-        "Output ONLY the system prompt itself — no preamble, no explanation, no markdown fences.",
-        "Begin directly with the system prompt content.",
-    ]
-    return "\n".join(parts)
+    if len(text.split()) < 6:
+        return "CLARIFY"
+
+    return "GENERATE"
 
 
-async def _stream_with_retry(prompt: str) -> AsyncGenerator[str, None]:
-    last_exc: Exception | None = None
+# =========================
+# CONTEXT BUILDER (ENFORCED ORDER)
+# =========================
+def build_messages(request: PromptGenerationRequest) -> List[Dict]:
+    messages: List[Dict] = []
+
+    # 1. SYSTEM ALWAYS FIRST (ENFORCED)
+    messages.append({
+        "role": "system",
+        "content": SYSTEM_MESSAGE
+    })
+
+    # 2. Optional trimmed history (prevents context overflow)
+    if request.conversation_history:
+        for msg in request.conversation_history[-6:]:
+            messages.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+
+    # 3. Server-controlled user input (mode injected)
+    mode = classify_mode(request.user_message)
+
+    messages.append({
+        "role": "user",
+        "content": f"""MODE: {mode}
+
+USER REQUEST:
+{request.user_message}
+
+Follow system rules strictly."""
+    })
+
+    return messages, mode
+
+
+# =========================
+# VALIDATION (FAIL SAFE)
+# =========================
+def validate_output(text: str, mode: str) -> str:
+    text = text.strip()
+
+    if mode == "CLARIFY" and "?" not in text:
+        raise ValueError("Invalid CLARIFY output")
+
+    if mode in ("GENERATE", "REFINE") and "?" in text:
+        raise ValueError("Invalid GENERATE/REFINE output contains questions")
+
+    return text
+
+
+# =========================
+# STREAM WITH RETRY
+# =========================
+async def stream_with_retry(messages) -> AsyncGenerator[str, None]:
+    last_error = None
+
     for attempt in range(MAX_RETRIES + 1):
         try:
-            async for token in llm_service.generate_stream(prompt):
+            async for token in llm_service.generate_stream(messages):
                 yield token
             return
+
         except OllamaUnavailableError:
             raise
-        except LLMStreamError as exc:
-            last_exc = exc
+
+        except LLMStreamError as e:
+            last_error = e
+
             if attempt < MAX_RETRIES:
-                wait = 2 ** attempt
-                logger.warning(
-                    "Stream attempt %d/%d failed (%s), retrying in %ds",
-                    attempt + 1, MAX_RETRIES + 1, exc, wait,
-                )
-                await asyncio.sleep(wait)
+                await asyncio.sleep(2 ** attempt)
+                logger.warning("Retrying LLM stream...")
             else:
-                logger.error("All %d stream attempts exhausted: %s", MAX_RETRIES + 1, exc)
-    raise last_exc  # type: ignore[misc]
+                logger.error("LLM failed after retries")
+
+    raise last_error
 
 
+# =========================
+# MAIN ENDPOINT
+# =========================
 @router.post("/generate-prompt")
-async def generate_prompt(request: PromptGenerationRequest) -> StreamingResponse:
-    logger.info("generate-prompt request received")
+async def generate_prompt(request: PromptGenerationRequest):
+    logger.info("Request received")
 
     if not await llm_service.check_availability():
         raise HTTPException(
             status_code=503,
-            detail=f"LLM service unavailable at {llm_service.base_url}. Ensure Ollama is running.",
+            detail="LLM service unavailable"
         )
 
-    system_prompt = _build_system_prompt(request)
+    messages, mode = build_messages(request)
 
-    async def event_generator() -> AsyncGenerator[str, None]:
+    async def event_stream():
+        buffer = ""
+
         try:
-            async for token in _stream_with_retry(system_prompt):
+            async for token in stream_with_retry(messages):
+                buffer += token
                 yield f"data: {token}\n\n"
-            logger.info("generate-prompt stream completed")
-        except OllamaUnavailableError as exc:
-            logger.error("Ollama became unavailable mid-stream: %s", exc)
-            yield "data: [ERROR] LLM service disconnected\n\n"
-        except LLMStreamError as exc:
-            logger.error("LLM stream error after retries: %s", exc)
-            yield "data: [ERROR] Failed to generate prompt\n\n"
-        except Exception as exc:
-            logger.exception("Unexpected error during streaming: %s", exc)
-            yield "data: [ERROR] Internal server error\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+            # enforce output correctness AFTER generation
+            validate_output(buffer, mode)
+
+        except Exception as e:
+            logger.exception("Streaming error: %s", e)
+            yield "data: [ERROR] Generation failed\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+# =========================
+# HEALTH CHECK
+# =========================
 @router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
-    available = await llm_service.check_availability()
+async def health():
+    ok = await llm_service.check_availability()
+
     return HealthResponse(
-        status="ok" if available else "degraded",
+        status="ok" if ok else "degraded",
         timestamp=datetime.now(timezone.utc).isoformat(),
-        ollama_available=available,
+        ollama_available=ok,
         model=llm_service.model,
     )

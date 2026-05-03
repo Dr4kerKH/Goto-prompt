@@ -1,15 +1,14 @@
-from typing import Literal
-
 from pydantic import BaseModel, field_validator
 
-FocusType = Literal["security", "performance", "best_practices", "custom", "none"]
+
+class ConversationMessage(BaseModel):
+    role: str
+    content: str
 
 
 class PromptGenerationRequest(BaseModel):
     user_message: str
-    focus: FocusType = "none"
-    custom_focus: str | None = None
-    conversation_context: str | None = None
+    conversation_history: list[ConversationMessage] | None = None
 
     @field_validator("user_message")
     @classmethod

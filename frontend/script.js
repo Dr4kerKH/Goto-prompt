@@ -2,32 +2,25 @@ const API_URL = 'http://localhost:8000';
 
 // ── State ────────────────────────────────────────────────────────────────────
 const state = {
-  isFirstMessage: true,
-  pendingMessage: '',
-  lastGeneratedPrompt: '',
+  conversationHistory: [],  // [{role, content}, ...]
   isStreaming: false,
   isListening: false,
   recognizer: null,
 };
 
-// ── DOM refs ─────────────────────────────────────────────────────────────────
-const chatMessages   = document.getElementById('chat-messages');
-const chatMain       = document.getElementById('chat-main');
-const textarea       = document.getElementById('message-input');
-const sendBtn        = document.getElementById('send-btn');
-const micBtn         = document.getElementById('mic-btn');
-const refreshBtn     = document.getElementById('refresh-btn');
-const modal          = document.getElementById('refinement-modal');
-const modalClose     = document.getElementById('modal-close');
-const modalSkip      = document.getElementById('modal-skip');
-const customContainer = document.getElementById('custom-input-container');
-const customInput    = document.getElementById('custom-focus-input');
-const customSubmit   = document.getElementById('custom-focus-submit');
+// ── DOM refs (initialized in DOMContentLoaded to guarantee DOM is ready) ─────
+let chatMessages, chatMain, textarea, sendBtn, micBtn, refreshBtn;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  chatMessages = document.getElementById('chat-messages');
+  chatMain     = document.getElementById('chat-main');
+  textarea     = document.getElementById('message-input');
+  sendBtn      = document.getElementById('send-btn');
+  micBtn       = document.getElementById('mic-btn');
+  refreshBtn   = document.getElementById('refresh-btn');
+
   setupTextarea();
-  setupModal();
 
   sendBtn.addEventListener('click', handleSend);
   refreshBtn.addEventListener('click', refreshSession);
@@ -49,23 +42,11 @@ function handleSend() {
   textarea.value = '';
   resetTextareaHeight();
   appendUserMessage(text);
-
-  if (state.isFirstMessage) {
-    state.isFirstMessage = false;
-    state.pendingMessage = text;
-    showModal();
-  } else {
-    submitToBackend(text, 'none', null, state.lastGeneratedPrompt || null);
-  }
-}
-
-function handleModalChoice(focus, customFocus = null) {
-  closeModal();
-  submitToBackend(state.pendingMessage, focus, customFocus, null);
+  submitToBackend(text);
 }
 
 // ── Backend SSE streaming ────────────────────────────────────────────────────
-async function submitToBackend(userMessage, focus, customFocus, conversationContext) {
+async function submitToBackend(userMessage) {
   state.isStreaming = true;
   sendBtn.disabled = true;
   sendBtn.classList.add('opacity-50');
@@ -78,9 +59,9 @@ async function submitToBackend(userMessage, focus, customFocus, conversationCont
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_message: userMessage,
-        focus,
-        custom_focus: customFocus,
-        conversation_context: conversationContext || null,
+        conversation_history: state.conversationHistory.length
+          ? state.conversationHistory
+          : null,
       }),
     });
 
@@ -96,7 +77,6 @@ async function submitToBackend(userMessage, focus, customFocus, conversationCont
     let buffer = '';
     let accumulated = '';
 
-    // Remove the "thinking" indicator once stream starts
     const thinkingEl = messageEl.querySelector('.thinking-indicator');
 
     while (true) {
@@ -105,7 +85,7 @@ async function submitToBackend(userMessage, focus, customFocus, conversationCont
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete line
+      buffer = lines.pop();
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
@@ -128,8 +108,11 @@ async function submitToBackend(userMessage, focus, customFocus, conversationCont
       }
     }
 
-    state.lastGeneratedPrompt = accumulated;
-    finalizeAiMessage(messageEl, accumulated, null);
+    // Add this turn to conversation history
+    state.conversationHistory.push({ role: 'user', content: userMessage });
+    state.conversationHistory.push({ role: 'assistant', content: accumulated });
+
+    finalizeAiMessage(messageEl, accumulated);
 
   } catch (err) {
     finalizeAiMessage(messageEl, null, `Network error: ${err.message}`);
@@ -163,7 +146,7 @@ function appendAiMessage() {
       <div class="glass-panel border-l-2 border-l-primary rounded-2xl rounded-tl-sm px-lg py-md w-full max-w-[90%] text-on-surface flex flex-col gap-md">
         <p class="thinking-indicator text-on-surface-variant text-sm flex items-center gap-sm">
           <span class="material-symbols-outlined text-[16px] animate-spin" style="animation-duration:1.5s">progress_activity</span>
-          Generating prompt…
+          Thinking…
         </p>
         <div class="bg-surface-container-lowest/80 rounded-lg p-md border border-outline-variant font-code text-code text-on-surface-variant overflow-x-auto">
           <pre><code class="prompt-content whitespace-pre-wrap"></code></pre>
@@ -200,20 +183,23 @@ function finalizeAiMessage(messageEl, content, errorText) {
   if (actionsEl) {
     actionsEl.classList.remove('hidden');
     actionsEl.innerHTML = `
-      <button onclick="injectFollowUp('Make it more detailed and comprehensive')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
+      <button onclick="injectFollowUp('Make it more detailed and add specific examples')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">add</span>More detail
       </button>
-      <button onclick="injectFollowUp('Make the tone stricter and more authoritative')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
-        <span class="material-symbols-outlined text-[16px]">tune</span>Stricter tone
+      <button onclick="injectFollowUp('Make the tone more formal and authoritative')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
+        <span class="material-symbols-outlined text-[16px]">tune</span>Formal tone
       </button>
-      <button onclick="injectFollowUp('Add concrete examples and edge case guidance')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
-        <span class="material-symbols-outlined text-[16px]">lightbulb</span>Add examples
+      <button onclick="injectFollowUp('Make it more concise and to the point')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
+        <span class="material-symbols-outlined text-[16px]">compress</span>More concise
+      </button>
+      <button onclick="injectFollowUp('Add constraints on what the AI should never do')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
+        <span class="material-symbols-outlined text-[16px]">block</span>Add constraints
       </button>
       <button onclick="copyPrompt(this)" data-content="${escapeAttr(content)}" class="px-md py-sm rounded-full glass-panel text-on-surface-variant hover:text-on-surface transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">content_copy</span>Copy Prompt
       </button>`;
   }
-  scrollToBottom();
+  scrollToBottom(true);
 }
 
 // ── Follow-up buttons ─────────────────────────────────────────────────────────
@@ -237,75 +223,18 @@ function copyPrompt(btn) {
   });
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────────
-function setupModal() {
-  // Focus option buttons (security / performance / best_practices)
-  document.querySelectorAll('.focus-option').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const focus = btn.dataset.focus;
-      if (focus === 'custom') {
-        customContainer.classList.toggle('hidden');
-        customInput.focus();
-      } else {
-        handleModalChoice(focus);
-      }
-    });
-  });
-
-  customSubmit.addEventListener('click', () => {
-    const val = customInput.value.trim();
-    if (val) handleModalChoice('custom', val);
-  });
-
-  customInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); customSubmit.click(); }
-  });
-
-  modalClose.addEventListener('click', () => {
-    closeModal();
-    submitToBackend(state.pendingMessage, 'none', null, null);
-  });
-
-  modalSkip.addEventListener('click', () => {
-    closeModal();
-    submitToBackend(state.pendingMessage, 'none', null, null);
-  });
-
-  // Close on backdrop click
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      closeModal();
-      submitToBackend(state.pendingMessage, 'none', null, null);
-    }
-  });
-}
-
-function showModal() {
-  customContainer.classList.add('hidden');
-  customInput.value = '';
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
-}
-
-function closeModal() {
-  modal.classList.add('hidden');
-  modal.classList.remove('flex');
-}
-
 // ── Refresh session ───────────────────────────────────────────────────────────
 function refreshSession() {
   if (state.isStreaming) return;
-  state.isFirstMessage = true;
-  state.pendingMessage = '';
-  state.lastGeneratedPrompt = '';
+  state.conversationHistory = [];
 
   chatMessages.innerHTML = `
     <div id="welcome-section" class="flex flex-col items-center justify-center py-xl gap-md text-center opacity-80 msg-enter">
       <div class="w-16 h-16 rounded-full glass-panel flex items-center justify-center shadow-[0_0_30px_rgba(78,222,163,0.15)]">
         <span class="material-symbols-outlined text-[32px] text-primary" style="font-variation-settings:'FILL' 1">auto_awesome</span>
       </div>
-      <h1 class="font-h2 text-h2 text-on-background mt-sm">Luminous Intelligence</h1>
-      <p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">Your expert prompt engineering assistant. Describe your task to begin.</p>
+      <h1 class="font-h2 text-h2 text-on-background mt-sm">Goto-prompt</h1>
+      <p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">Your prompt engineering assistant. Describe what you need — I'll ask if I need more details.</p>
     </div>`;
 }
 
@@ -322,8 +251,12 @@ function resetTextareaHeight() {
 }
 
 // ── Scroll ────────────────────────────────────────────────────────────────────
-function scrollToBottom() {
-  chatMain.scrollTo({ top: chatMain.scrollHeight, behavior: 'smooth' });
+function scrollToBottom(smooth = false) {
+  if (smooth) {
+    chatMain.scrollTo({ top: chatMain.scrollHeight, behavior: 'smooth' });
+  } else {
+    chatMain.scrollTop = chatMain.scrollHeight;
+  }
 }
 
 // ── Speech-to-text ────────────────────────────────────────────────────────────

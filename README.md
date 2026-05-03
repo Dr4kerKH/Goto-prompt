@@ -9,7 +9,7 @@ A chat-based prompt engineering assistant. Describe what you need, choose a focu
 - **Conversational interface** — refine prompts through natural follow-up messages
 - **Focus modes** — Security, Performance, Best Practices, or a custom focus you define
 - **Real-time streaming** — tokens stream as they are generated via Server-Sent Events
-- **Local AI** — runs entirely through [Ollama](https://ollama.com); your data never leaves your machine
+- **Local AI** — runs entirely through [Ollama](https://ollama.com);
 - **Voice input** — Web Speech API mic button for hands-free prompting
 - **No build step** — frontend is plain HTML + Tailwind CDN
 
@@ -21,11 +21,11 @@ A chat-based prompt engineering assistant. Describe what you need, choose a focu
 Browser (:3000)  →  FastAPI (:8000)  →  Ollama (:11434)
 ```
 
-| Layer | Tech |
-|---|---|
-| Frontend | HTML, Tailwind CSS (CDN), Vanilla JS |
-| Backend | Python 3.10+, FastAPI, Uvicorn |
-| LLM runtime | Ollama (local) |
+|    Layer    |                Tech                  |
+|-------------|--------------------------------------|
+| Frontend    | HTML, Tailwind CSS (CDN), Vanilla JS |
+| Backend     | Python 3.10+, FastAPI, Uvicorn       |
+| LLM runtime | Ollama (local)                       |
 
 ---
 
@@ -44,8 +44,8 @@ Browser (:3000)  →  FastAPI (:8000)  →  Ollama (:11434)
 ## Quick Start
 
 ```bash
-# 1. Pull a model (one-time)
-ollama pull llama2:7b
+# 1. Pull the default model (one-time)
+ollama pull mistral:7b
 
 # 2. Start Ollama
 ollama serve
@@ -85,7 +85,7 @@ Copy `backend/.env.example` to `backend/.env` (done automatically by `make setup
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_API_URL` | `http://localhost:11434` | Ollama service URL |
-| `LLM_MODEL` | `llama2:7b` | Model name (`mistral:7b` also works) |
+| `LLM_MODEL` | `mistral:7b` | Ollama model tag (must be pulled locally) |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
 | `PORT` | `8000` | Backend port |
 | `LOG_LEVEL` | `info` | Logging verbosity |
@@ -129,7 +129,7 @@ Returns Ollama availability and current model.
   "status": "ok",
   "timestamp": "2026-04-30T10:00:00+00:00",
   "ollama_available": true,
-  "model": "llama2:7b"
+  "model": "mistral:7b"
 }
 ```
 
@@ -188,11 +188,10 @@ docker run -p 8000:8000 --env-file .env goto-prompt-api
 
 ## Supported Models
 
-Any model available in Ollama works. Recommended:
+This project defaults to **Mistral** (`mistral:7b`). Any Ollama model works if you set `LLM_MODEL` and pull it first.
 
 | Model | Size | Notes |
 |---|---|---|
-| `llama2:7b` | ~4 GB | Default; good balance |
-| `mistral:7b` | ~4 GB | Faster, strong instruction following |
+| `mistral:7b` | ~4 GB | Default — fast, strong instruction following |
 
-Pull with: `ollama pull <model-name>`
+Other models: change `LLM_MODEL` and run `ollama pull <model-name>`.

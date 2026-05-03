@@ -34,7 +34,7 @@
         borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px" },
         spacing: {
           "md": "16px", "sm": "8px", "container-max": "1200px",
-          "unit": "4px", "xs": "4px", "xl": "40px", "lg": "24px", "chat-max": "800px"
+          "unit": "4px", "xs": "4px", "xl": "40px", "lg": "24px", "chat-max": "960px"
         },
         fontFamily: {
           "h3": ["Space Grotesk"], "code": ["Space Grotesk"], "body-md": ["Manrope"],
@@ -81,7 +81,7 @@
   textarea:focus { outline: none; box-shadow: none; }
 </style>
 </head>
-<body class="text-on-background flex flex-col h-screen overflow-hidden font-body-md text-body-md">
+<body class="flex flex-col h-screen overflow-hidden">
 
 <!-- Top App Bar -->
 <header class="flex items-center justify-center w-full px-lg py-md backdrop-blur-xl border-b border-white/10 z-10 relative bg-surface-container-low/40">
@@ -95,29 +95,29 @@
 </header>
 
 <!-- Main Chat Canvas -->
-<main id="chat-main" class="flex-1 overflow-y-auto w-full flex justify-center py-xl px-md scroll-smooth">
-  <div id="chat-messages" class="w-full max-w-chat-max flex flex-col gap-lg pb-[140px]">
+<main id="chat-main" class="flex-1 overflow-y-auto w-full flex justify-center pt-xl px-md scroll-smooth">
+  <div id="chat-messages" class="w-full max-w-chat-max flex flex-col gap-lg pb-50">
 
     <!-- Welcome screen -->
     <div id="welcome-section" class="flex flex-col items-center justify-center py-xl gap-md text-center opacity-80">
       <div class="w-16 h-16 rounded-full glass-panel flex items-center justify-center shadow-[0_0_30px_rgba(78,222,163,0.15)]">
         <span class="material-symbols-outlined text-[32px] text-primary" style="font-variation-settings:'FILL' 1">auto_awesome</span>
       </div>
-      <h1 class="font-h2 text-h2 text-on-background mt-sm">Luminous Intelligence</h1>
-      <p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">Your expert prompt engineering assistant. Describe your task to begin.</p>
+      <h1 class="font-h2 text-h2 text-on-background mt-sm">Goto-prompt</h1>
+      <p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">Your prompt engineering assistant. Describe what you need — I'll ask if I need more details.</p>
     </div>
 
   </div>
 </main>
 
 <!-- Bottom Input Area -->
-<div class="absolute bottom-0 left-0 w-full bg-gradient-to-t from-background via-background/90 to-transparent pt-xl pb-lg px-md flex justify-center z-20">
+<div class="w-full bg-gradient-to-t from-background via-background/90 to-transparent pt-mb pb-lg px-md flex justify-center z-20">
   <div class="w-full max-w-chat-max">
     <div class="relative glass-panel bg-surface-container/30 backdrop-blur-xl rounded-xl shadow-2xl shadow-primary/5 focus-within:border-primary/50 transition-colors duration-300 border border-white/10">
       <textarea
         id="message-input"
         class="w-full bg-transparent border-none text-on-surface focus:ring-0 resize-none py-lg px-lg font-body-md text-body-md pr-[108px]"
-        placeholder="Describe the prompt you need..."
+        placeholder="e.g. a professional email assistant, a Python code reviewer, a customer support agent…"
         rows="1"
         style="min-height:64px;max-height:200px"
       ></textarea>
@@ -136,90 +136,6 @@
   </div>
 </div>
 
-<!-- Refinement Modal (hidden by default) -->
-<div id="refinement-modal" class="fixed inset-0 z-[100] hidden items-center justify-center p-md bg-background/80 backdrop-blur-sm">
-  <div class="glass-panel bg-surface-container-high/60 backdrop-blur-xl w-full max-w-lg rounded-xl shadow-2xl overflow-hidden relative border border-white/20">
-
-    <!-- Header -->
-    <div class="flex items-center justify-between p-lg border-b border-white/10">
-      <h2 class="font-h3 text-h3 text-on-background">Help me refine your prompt</h2>
-      <button id="modal-close" class="p-xs text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-white/5">
-        <span class="material-symbols-outlined text-[24px]">close</span>
-      </button>
-    </div>
-
-    <!-- Body -->
-    <div class="p-lg flex flex-col gap-md">
-      <p class="text-on-surface-variant">To provide better results, tell me more about your requirements:</p>
-      <div class="grid grid-cols-1 gap-sm">
-
-        <button data-focus="security" class="focus-option flex items-start gap-md p-md rounded-lg border border-white/10 bg-white/5 hover:bg-primary/10 hover:border-primary/30 transition-all text-left group">
-          <div class="w-10 h-10 shrink-0 rounded-full bg-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-            <span class="material-symbols-outlined text-primary text-[20px]">security</span>
-          </div>
-          <div>
-            <div class="font-bold text-on-surface">Focus on Security</div>
-            <div class="text-label-sm text-on-surface-variant">Prioritize OWASP top 10 and data protection.</div>
-          </div>
-        </button>
-
-        <button data-focus="performance" class="focus-option flex items-start gap-md p-md rounded-lg border border-white/10 bg-white/5 hover:bg-primary/10 hover:border-primary/30 transition-all text-left group">
-          <div class="w-10 h-10 shrink-0 rounded-full bg-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-            <span class="material-symbols-outlined text-primary text-[20px]">speed</span>
-          </div>
-          <div>
-            <div class="font-bold text-on-surface">Focus on Performance</div>
-            <div class="text-label-sm text-on-surface-variant">Optimize for speed, efficiency, and caching.</div>
-          </div>
-        </button>
-
-        <button data-focus="best_practices" class="focus-option flex items-start gap-md p-md rounded-lg border border-white/10 bg-white/5 hover:bg-primary/10 hover:border-primary/30 transition-all text-left group">
-          <div class="w-10 h-10 shrink-0 rounded-full bg-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-            <span class="material-symbols-outlined text-primary text-[20px]">architecture</span>
-          </div>
-          <div>
-            <div class="font-bold text-on-surface">Focus on Best Practices</div>
-            <div class="text-label-sm text-on-surface-variant">Ensure clean architecture and maintainability.</div>
-          </div>
-        </button>
-
-        <!-- Custom Focus -->
-        <div class="flex flex-col gap-sm p-md rounded-lg border border-white/10 bg-white/5">
-          <button data-focus="custom" class="focus-option flex items-start gap-md text-left group w-full">
-            <div class="w-10 h-10 shrink-0 rounded-full bg-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <span class="material-symbols-outlined text-primary text-[20px]">edit</span>
-            </div>
-            <div>
-              <div class="font-bold text-on-surface">Custom Focus</div>
-              <div class="text-label-sm text-on-surface-variant">Define your own focus area.</div>
-            </div>
-          </button>
-          <div id="custom-input-container" class="hidden pl-[56px] flex flex-col gap-sm">
-            <input
-              id="custom-focus-input"
-              type="text"
-              placeholder="e.g., accessibility, i18n, GraphQL pagination…"
-              class="w-full bg-surface-container-lowest/60 rounded-lg px-md py-sm border border-outline-variant text-on-surface focus:border-primary/50 focus:ring-0 font-body-md text-body-md"
-            />
-            <button id="custom-focus-submit" class="self-start px-md py-sm rounded-full bg-primary text-on-primary font-label-sm text-label-sm hover:bg-primary-fixed-dim transition-colors glow-button">
-              Apply
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- Footer -->
-    <div class="p-lg pt-0 flex justify-end">
-      <button id="modal-skip" class="px-lg py-sm rounded-full bg-primary text-on-primary font-label-sm text-label-sm hover:bg-primary-fixed-dim transition-colors glow-button">
-        Skip for now
-      </button>
-    </div>
-
-  </div>
-</div>
-
-<script src="script.js"></script>
+<script src="script.js?v=5"></script>
 </body>
 </html>
