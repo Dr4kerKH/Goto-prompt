@@ -25,7 +25,7 @@ dev-backend:
 
 ## Serve frontend on port 3000
 dev-frontend:
-	python -m http.server 3000 --directory frontend
+	py -m http.server 3000 --directory frontend
 ===========================================================================
 ## Remove virtualenv
 clean:

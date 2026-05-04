@@ -87,6 +87,7 @@ Copy `backend/.env.example` to `backend/.env` (done automatically by `make setup
 | `OLLAMA_API_URL` | `http://localhost:11434` | Ollama service URL |
 | `LLM_MODEL` | `mistral:7b` | Ollama model tag (must be pulled locally) |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `TASK_TEMPLATE_PATH` | _(unset)_ | Optional path to task template override file (`.json`, `.yaml`, `.yml`) |
 | `PORT` | `8000` | Backend port |
 | `LOG_LEVEL` | `info` | Logging verbosity |
 
@@ -102,21 +103,21 @@ Streams a generated system prompt as SSE.
 
 ```json
 {
-  "user_message": "A customer support agent for a SaaS product",
-  "focus": "security",
-  "custom_focus": "",
-  "conversation_context": ""
+  "user_message": "Add JSON output schema and stricter safety rules",
+  "task_type": "coding",
+  "canonical_prompt": "<full prior prompt text or null on first turn>",
+  "recent_deltas": ["Make it more formal", "Shorter opening"]
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `user_message` | string | What the prompt should do |
-| `focus` | string | `security` \| `performance` \| `best_practices` \| `custom` |
-| `custom_focus` | string | Used when `focus` is `custom` |
-| `conversation_context` | string | Previous generated prompt for refinement turns |
+| `user_message` | string | Current instruction (required) |
+| `task_type` | string \| null | Optional explicit template type: `coding`, `design_with_code`, `format_rewrite`, `image_generation` |
+| `canonical_prompt` | string \| null | Last full prompt document; omitted or null on first turn |
+| `recent_deltas` | string[] \| null | Prior user lines only (oldest first), capped on server and client |
 
-**Response:** `text/event-stream` — each `data:` line is a token chunk.
+**Response:** `text/event-stream` — each `data:` line is a token chunk. After content, the server sends `data: [META]prompt` or `data: [META]clarify` so the client knows whether to update the stored canonical prompt.
 
 ---
 
@@ -149,7 +150,8 @@ Returns Ollama availability and current model.
 │   ├── routers/
 │   │   └── prompts.py           # POST /api/generate-prompt, GET /api/health
 │   ├── services/
-│   │   └── llm_service.py       # Ollama HTTP client, streaming
+│   │   ├── llm_service.py       # Ollama HTTP client, streaming
+│   │   └── template_registry.py # Task templates (built-in + optional override file)
 │   ├── models/
 │   │   └── schemas.py           # Pydantic request/response models
 │   └── utils/
@@ -177,12 +179,37 @@ docker run -p 8000:8000 --env-file .env goto-prompt-api
 ## How It Works
 
 1. User types a task description and hits send
-2. On the first message, a **refinement modal** appears with four focus options
-3. The frontend sends `POST /api/generate-prompt` with the message and chosen focus
-4. The backend builds a meta-prompt and streams tokens from Ollama over SSE
-5. The frontend appends each token to a live code block with a blinking cursor
-6. On completion, **follow-up suggestion pills** and a **Copy** button appear
-7. Follow-up messages include the previous prompt as `conversation_context` so the LLM refines rather than regenerates
+2. The frontend sends `POST /api/generate-prompt` with `user_message`, optional `task_type`, optional `canonical_prompt`, and optional `recent_deltas`
+3. The backend resolves task template (explicit `task_type` first, classifier fallback), builds a structured context window (template + canonical + deltas), and streams tokens from Ollama over SSE
+4. The frontend appends each token to a live code block with a blinking cursor (skipping `[META]` lines)
+5. On completion, **follow-up suggestion pills** and a **Copy** button appear
+6. If the stream ended with `[META]prompt`, the client stores the reply as `canonical_prompt` for the next turn; `[META]clarify` keeps clarifying without replacing the canonical yet
+
+---
+
+## Task Templates
+
+Supported `task_type` values:
+
+- `coding`
+- `design_with_code`
+- `format_rewrite`
+- `image_generation`
+
+Template source is hybrid:
+
+- Built-in defaults in `backend/services/template_registry.py`
+- Optional override file via `TASK_TEMPLATE_PATH` (`.json`, `.yaml`, or `.yml`)
+
+Only known task keys are accepted from override files; unknown keys are ignored.
+
+Example override JSON:
+
+```json
+{
+  "coding": "TASK TEMPLATE: coding\\n- Require language/runtime and test command placeholders like [YOUR_LANGUAGE] and [YOUR_TEST_COMMAND]."
+}
+```
 
 ---
 

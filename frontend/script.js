@@ -1,8 +1,15 @@
 const API_URL = 'http://localhost:8000';
 
 // ── State ────────────────────────────────────────────────────────────────────
+const MAX_RECENT_DELTAS = 6;
+
 const state = {
-  conversationHistory: [],  // [{role, content}, ...]
+  /** Last accepted full prompt from assistant (prompt-kind only). */
+  canonicalPrompt: null,
+  /** Prior user instructions, oldest-first, capped — sent as recent_deltas. */
+  recentDeltas: [],
+  /** Optional explicit task type sent to backend for template selection. */
+  selectedTaskType: null,
   isStreaming: false,
   isListening: false,
   recognizer: null,
@@ -46,6 +53,42 @@ function handleSend() {
 }
 
 // ── Backend SSE streaming ────────────────────────────────────────────────────
+function wantsFreshSession(text) {
+  const t = text.toLowerCase();
+  return (
+    t.includes('start over') ||
+    t.includes('new session') ||
+    t.includes('new prompt') ||
+    t.includes('from scratch') ||
+    t.includes('ignore previous') ||
+    t.includes('discard canonical') ||
+    t.includes('reset prompt')
+  );
+}
+
+function inferTaskType(text) {
+  const t = text.toLowerCase();
+  if (
+    ['image', 'logo', 'poster', 'illustration', 'thumbnail', 'midjourney', 'dall-e', 'stable diffusion']
+      .some((k) => t.includes(k))
+  ) {
+    return 'image_generation';
+  }
+  if (
+    ['system design', 'architecture', 'design doc', 'tradeoff', 'component diagram', 'mermaid']
+      .some((k) => t.includes(k))
+  ) {
+    return 'design_with_code';
+  }
+  if (
+    ['code', 'bug', 'refactor', 'function', 'class', 'python', 'javascript', 'typescript', 'test']
+      .some((k) => t.includes(k))
+  ) {
+    return 'coding';
+  }
+  return 'format_rewrite';
+}
+
 async function submitToBackend(userMessage) {
   state.isStreaming = true;
   sendBtn.disabled = true;
@@ -54,21 +97,30 @@ async function submitToBackend(userMessage) {
   const messageEl = appendAiMessage();
 
   try {
+    if (wantsFreshSession(userMessage)) {
+      state.canonicalPrompt = null;
+      state.recentDeltas = [];
+      state.selectedTaskType = null;
+    }
+    const taskType = state.selectedTaskType || inferTaskType(userMessage);
+    state.selectedTaskType = taskType;
+
     const res = await fetch(`${API_URL}/api/generate-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_message: userMessage,
-        conversation_history: state.conversationHistory.length
-          ? state.conversationHistory
-          : null,
+        canonical_prompt: state.canonicalPrompt,
+        task_type: taskType,
+        recent_deltas:
+          state.recentDeltas.length > 0 ? [...state.recentDeltas] : null,
       }),
     });
 
     if (!res.ok) {
       let detail = 'Request failed';
       try { detail = (await res.json()).detail; } catch (_) {}
-      finalizeAiMessage(messageEl, null, `Error: ${detail}`);
+      finalizeAiMessage(messageEl, null, `Error: ${detail}`, 'prompt');
       return;
     }
 
@@ -76,6 +128,7 @@ async function submitToBackend(userMessage) {
     const decoder = new TextDecoder();
     let buffer = '';
     let accumulated = '';
+    let responseKind = 'prompt';
 
     const thinkingEl = messageEl.querySelector('.thinking-indicator');
 
@@ -92,8 +145,14 @@ async function submitToBackend(userMessage) {
         const token = line.slice(6);
 
         if (token.startsWith('[ERROR]')) {
-          finalizeAiMessage(messageEl, null, token.slice(7).trim());
+          finalizeAiMessage(messageEl, null, token.slice(7).trim(), 'prompt');
           return;
+        }
+
+        if (token.startsWith('[META]')) {
+          const k = token.slice(6).trim();
+          if (k === 'clarify' || k === 'prompt') responseKind = k;
+          continue;
         }
 
         if (thinkingEl) thinkingEl.remove();
@@ -108,14 +167,18 @@ async function submitToBackend(userMessage) {
       }
     }
 
-    // Add this turn to conversation history
-    state.conversationHistory.push({ role: 'user', content: userMessage });
-    state.conversationHistory.push({ role: 'assistant', content: accumulated });
+    if (responseKind === 'prompt') {
+      state.canonicalPrompt = accumulated.trim() || state.canonicalPrompt;
+    }
+    state.recentDeltas.push(userMessage);
+    if (state.recentDeltas.length > MAX_RECENT_DELTAS) {
+      state.recentDeltas.splice(0, state.recentDeltas.length - MAX_RECENT_DELTAS);
+    }
 
-    finalizeAiMessage(messageEl, accumulated);
+    finalizeAiMessage(messageEl, accumulated, null, responseKind);
 
   } catch (err) {
-    finalizeAiMessage(messageEl, null, `Network error: ${err.message}`);
+    finalizeAiMessage(messageEl, null, `Network error: ${err.message}`, 'prompt');
   } finally {
     state.isStreaming = false;
     sendBtn.disabled = false;
@@ -148,8 +211,10 @@ function appendAiMessage() {
           <span class="material-symbols-outlined text-[16px] animate-spin" style="animation-duration:1.5s">progress_activity</span>
           Thinking…
         </p>
-        <div class="bg-surface-container-lowest/80 rounded-lg p-md border border-outline-variant font-code text-code text-on-surface-variant overflow-x-auto">
-          <pre><code class="prompt-content whitespace-pre-wrap"></code></pre>
+        <div class="bg-surface-container-lowest/80 rounded-lg p-md border border-outline-variant overflow-x-auto">
+          <div class="prompt-shell">
+            <div class="prompt-content font-code text-code text-on-surface-variant whitespace-pre-wrap min-h-[1.25em]"></div>
+          </div>
         </div>
         <div class="message-actions flex flex-wrap gap-sm hidden"></div>
       </div>
@@ -159,7 +224,92 @@ function appendAiMessage() {
   return div;
 }
 
-function finalizeAiMessage(messageEl, content, errorText) {
+/** Lines that are only "Section title:" (scannable headings from the model). */
+function isSectionHeaderLine(line) {
+  const t = line.trim();
+  if (t.length < 3 || t.length > 72) return false;
+  if (/^\d+\.\s/.test(t)) return false;
+  if (/\?\s*$/.test(t)) return false;
+  if (!/^[A-Za-z]/.test(t)) return false;
+  return /:\s*$/.test(t);
+}
+
+function parseSections(text) {
+  const lines = text.split('\n');
+  const sections = [];
+  let pendingHeading = null;
+  let bodyLines = [];
+
+  function emit() {
+    const body = bodyLines.join('\n');
+    bodyLines = [];
+    if (pendingHeading === null && !body.trim()) return;
+    sections.push({ heading: pendingHeading, body });
+  }
+
+  for (const line of lines) {
+    if (isSectionHeaderLine(line)) {
+      emit();
+      pendingHeading = line.trim().replace(/:\s*$/, '');
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  emit();
+  return sections;
+}
+
+/** Highlight [YOUR_*], [[BRACKET]], FILL:, and {{ Mustache }}-style placeholders. */
+function renderWithPlaceholders(text) {
+  const re =
+    /\[\[(?:[^\]])+\]\]|\[(?!META\])(?:YOUR_[A-Z0-9_]+|FILL:[^\]\n]+|[A-Z][A-Z0-9_]{3,})\]|\{\{[^}]+\}\}/g;
+  let html = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    html += escapeHtml(text.slice(last, m.index));
+    html += `<span class="prompt-placeholder">${escapeHtml(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  html += escapeHtml(text.slice(last));
+  return html;
+}
+
+function buildFormattedPromptHtml(text, responseKind) {
+  if (responseKind === 'clarify') {
+    return `<div class="prompt-clarify font-body-md text-on-surface leading-relaxed whitespace-pre-wrap">${renderWithPlaceholders(text)}</div>`;
+  }
+
+  const secs = parseSections(text);
+  const nonEmpty = secs.filter((s) => s.body.trim().length > 0 || s.heading);
+  if (nonEmpty.length === 0) {
+    return `<div class="font-code text-code whitespace-pre-wrap text-on-surface-variant leading-relaxed">${renderWithPlaceholders(text)}</div>`;
+  }
+  if (nonEmpty.length === 1 && !nonEmpty[0].heading) {
+    return `<div class="font-code text-code text-on-surface-variant whitespace-pre-wrap leading-relaxed">${renderWithPlaceholders(nonEmpty[0].body)}</div>`;
+  }
+
+  return nonEmpty
+    .map((s) => {
+      const body = renderWithPlaceholders(s.body);
+      if (s.heading) {
+        return `<section class="prompt-section border-b border-outline-variant/25 pb-md mb-md last:border-b-0 last:mb-0 last:pb-0">
+        <h4 class="prompt-section-title font-label-sm text-primary mb-sm">${escapeHtml(s.heading)}</h4>
+        <div class="font-code text-code text-on-surface-variant whitespace-pre-wrap leading-relaxed">${body}</div>
+      </section>`;
+      }
+      return `<div class="font-code text-code text-on-surface-variant whitespace-pre-wrap leading-relaxed mb-md">${body}</div>`;
+    })
+    .join('');
+}
+
+function applyPromptFormatting(messageEl, rawText, responseKind) {
+  const shell = messageEl.querySelector('.prompt-shell');
+  if (!shell || rawText == null) return;
+  shell.innerHTML = buildFormattedPromptHtml(rawText, responseKind);
+}
+
+function finalizeAiMessage(messageEl, content, errorText, responseKind = 'prompt') {
   const codeEl = messageEl.querySelector('.prompt-content');
   const actionsEl = messageEl.querySelector('.message-actions');
   const thinkingEl = messageEl.querySelector('.thinking-indicator');
@@ -180,6 +330,10 @@ function finalizeAiMessage(messageEl, content, errorText) {
     return;
   }
 
+  if (content != null && content !== '') {
+    applyPromptFormatting(messageEl, content, responseKind);
+  }
+
   if (actionsEl) {
     actionsEl.classList.remove('hidden');
     actionsEl.innerHTML = `
@@ -194,6 +348,9 @@ function finalizeAiMessage(messageEl, content, errorText) {
       </button>
       <button onclick="injectFollowUp('Add constraints on what the AI should never do')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">block</span>Add constraints
+      </button>
+      <button onclick="injectFollowUp('Add [YOUR_*] placeholders for anything still unknown and a short checklist at the top')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
+        <span class="material-symbols-outlined text-[16px]">edit_note</span>Placeholders
       </button>
       <button onclick="copyPrompt(this)" data-content="${escapeAttr(content)}" class="px-md py-sm rounded-full glass-panel text-on-surface-variant hover:text-on-surface transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">content_copy</span>Copy Prompt
@@ -226,7 +383,9 @@ function copyPrompt(btn) {
 // ── Refresh session ───────────────────────────────────────────────────────────
 function refreshSession() {
   if (state.isStreaming) return;
-  state.conversationHistory = [];
+  state.canonicalPrompt = null;
+  state.recentDeltas = [];
+  state.selectedTaskType = null;
 
   chatMessages.innerHTML = `
     <div id="welcome-section" class="flex flex-col items-center justify-center py-xl gap-md text-center opacity-80 msg-enter">
