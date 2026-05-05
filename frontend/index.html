@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>Goto-prompt</title>
+<title>Goto-Prompt</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -94,14 +94,54 @@
   .prompt-section-title {
     letter-spacing: 0.06em;
   }
+
+  /* ── Loading screen ── */
+  @keyframes loading-glow {
+    0%,100% { box-shadow: 0 0 20px rgba(78,222,163,0.2); transform: rotate(45deg) scale(1); }
+    50%      { box-shadow: 0 0 45px rgba(78,222,163,0.5); transform: rotate(45deg) scale(1.05); }
+  }
+  .loading-glow { animation: loading-glow 3s ease-in-out infinite; }
+
+  @keyframes loading-progress {
+    from { width: 0; }
+    to   { width: 100%; }
+  }
+  .loading-progress { animation: loading-progress 2s ease forwards; }
+
+  #loading-screen {
+    transition: opacity 0.7s ease;
+  }
+  #loading-screen.hide {
+    opacity: 0;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body class="flex flex-col h-screen overflow-hidden">
 
+<!-- Loading Screen -->
+<div id="loading-screen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
+  <div class="absolute w-[600px] h-[600px] bg-emerald-400/10 blur-[120px] -top-40 -left-40 rounded-full pointer-events-none"></div>
+  <div class="absolute w-[800px] h-[800px] bg-slate-600/20 blur-[160px] -bottom-40 -right-40 rounded-full pointer-events-none"></div>
+  <div class="relative z-10 text-center w-full max-w-xs px-6">
+    <div class="relative w-24 h-24 mx-auto mb-6 flex items-center justify-center">
+      <div class="absolute inset-0 rounded-2xl border border-white/10 loading-glow"></div>
+      <span class="material-symbols-outlined text-[48px] text-primary" style="font-variation-settings:'FILL' 1">auto_awesome</span>
+    </div>
+    <h1 class="font-h2 text-h2 text-on-background mb-8 tracking-tight">
+      Goto-Prompt
+    </h1>
+    <div class="h-px bg-white/10 rounded-full overflow-hidden mb-3">
+      <div class="h-full bg-primary loading-progress"></div>
+    </div>
+    <p class="font-label-sm text-label-sm text-on-surface-variant/60 tracking-widest">INITIALIZING PROMPT ENGINE…</p>
+  </div>
+</div>
+
 <!-- Top App Bar -->
 <header class="flex items-center justify-center w-full px-lg py-md backdrop-blur-xl border-b border-white/10 z-10 relative bg-surface-container-low/40">
   <div class="flex items-center justify-between w-full max-w-container-max mx-auto">
-    <div class="text-h3 font-h3 text-primary tracking-tight font-bold">Goto-prompt</div>
+    <div class="text-h3 font-h3 text-primary tracking-tight font-bold">Goto-Prompt</div>
     <button id="refresh-btn" class="flex items-center gap-sm px-md py-sm rounded-full glass-panel text-on-surface hover:bg-white/5 transition-colors">
       <span class="material-symbols-outlined text-[18px]">refresh</span>
       <span class="font-label-sm text-label-sm">Refresh session</span>
@@ -118,7 +158,7 @@
       <div class="w-16 h-16 rounded-full glass-panel flex items-center justify-center shadow-[0_0_30px_rgba(78,222,163,0.15)]">
         <span class="material-symbols-outlined text-[32px] text-primary" style="font-variation-settings:'FILL' 1">auto_awesome</span>
       </div>
-      <h1 class="font-h2 text-h2 text-on-background mt-sm">Goto-prompt</h1>
+      <h1 class="font-h2 text-h2 text-on-background mt-sm">Goto-Prompt</h1>
       <p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">Your prompt engineering assistant. Describe what you need — I'll ask if I need more details.</p>
     </div>
 
@@ -131,7 +171,7 @@
     <div class="relative glass-panel bg-surface-container/30 backdrop-blur-xl rounded-xl shadow-2xl shadow-primary/5 focus-within:border-primary/50 transition-colors duration-300 border border-white/10">
       <textarea
         id="message-input"
-        class="w-full bg-transparent border-none text-on-surface focus:ring-0 resize-none py-lg px-lg font-body-md text-body-md pr-[108px]"
+        class="w-full bg-transparent border-none text-on-surface focus:ring-0 resize-none overflow-hidden py-lg px-lg font-body-md text-body-md pr-[108px]"
         placeholder="e.g. a professional email assistant, a Python code reviewer, a customer support agent…"
         rows="1"
         style="min-height:64px;max-height:200px"
@@ -146,11 +186,18 @@
       </div>
     </div>
     <div class="text-center mt-sm">
-      <span class="font-label-sm text-label-sm text-on-surface-variant/50">Goto-prompt uses local AI. Verify critical information.</span>
+      <span class="font-label-sm text-label-sm text-on-surface-variant/50">Goto-Prompt uses local AI. Verify critical information.</span>
     </div>
   </div>
 </div>
 
 <script src="script.js?v=6"></script>
+<script>
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      document.getElementById('loading-screen').classList.add('hide');
+    }, 2200);
+  });
+</script>
 </body>
 </html>

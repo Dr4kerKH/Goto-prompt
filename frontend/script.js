@@ -392,7 +392,7 @@ function refreshSession() {
       <div class="w-16 h-16 rounded-full glass-panel flex items-center justify-center shadow-[0_0_30px_rgba(78,222,163,0.15)]">
         <span class="material-symbols-outlined text-[32px] text-primary" style="font-variation-settings:'FILL' 1">auto_awesome</span>
       </div>
-      <h1 class="font-h2 text-h2 text-on-background mt-sm">Goto-prompt</h1>
+      <h1 class="font-h2 text-h2 text-on-background mt-sm">Goto-Prompt</h1>
       <p class="font-body-lg text-body-lg text-on-surface-variant max-w-md">Your prompt engineering assistant. Describe what you need — I'll ask if I need more details.</p>
     </div>`;
 }
