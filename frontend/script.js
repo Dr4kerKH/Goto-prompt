@@ -131,6 +131,9 @@ async function submitToBackend(userMessage) {
     let responseKind = 'prompt';
 
     const thinkingEl = messageEl.querySelector('.thinking-indicator');
+    const chatProseEl = messageEl.querySelector('.chat-prose');
+    const promptBoxEl = messageEl.querySelector('.prompt-box');
+    const promptContentEl = messageEl.querySelector('.prompt-content');
 
     while (true) {
       const { done, value } = await reader.read();
@@ -151,17 +154,31 @@ async function submitToBackend(userMessage) {
 
         if (token.startsWith('[META]')) {
           const k = token.slice(6).trim();
-          if (k === 'clarify' || k === 'prompt') responseKind = k;
+          if (k === 'clarify' || k === 'prompt' || k === 'chat') {
+            responseKind = k;
+            // Switch to chat prose rendering as soon as [META]chat arrives
+            if (k === 'chat' && promptBoxEl && chatProseEl) {
+              promptBoxEl.classList.add('hidden');
+              chatProseEl.classList.remove('hidden');
+            }
+          }
           continue;
         }
 
         if (thinkingEl) thinkingEl.remove();
 
         accumulated += token;
-        const codeEl = messageEl.querySelector('.prompt-content');
-        if (codeEl) {
-          codeEl.textContent = accumulated;
-          codeEl.classList.add('streaming-cursor');
+
+        if (responseKind === 'chat') {
+          if (chatProseEl) {
+            chatProseEl.textContent = accumulated;
+            chatProseEl.classList.add('streaming-cursor');
+          }
+        } else {
+          if (promptContentEl) {
+            promptContentEl.textContent = accumulated;
+            promptContentEl.classList.add('streaming-cursor');
+          }
         }
         scrollToBottom();
       }
@@ -170,9 +187,13 @@ async function submitToBackend(userMessage) {
     if (responseKind === 'prompt') {
       state.canonicalPrompt = accumulated.trim() || state.canonicalPrompt;
     }
-    state.recentDeltas.push(userMessage);
-    if (state.recentDeltas.length > MAX_RECENT_DELTAS) {
-      state.recentDeltas.splice(0, state.recentDeltas.length - MAX_RECENT_DELTAS);
+    if (responseKind === 'chat') {
+      state.selectedTaskType = null;
+    } else {
+      state.recentDeltas.push(userMessage);
+      if (state.recentDeltas.length > MAX_RECENT_DELTAS) {
+        state.recentDeltas.splice(0, state.recentDeltas.length - MAX_RECENT_DELTAS);
+      }
     }
 
     finalizeAiMessage(messageEl, accumulated, null, responseKind);
@@ -211,7 +232,8 @@ function appendAiMessage() {
           <span class="material-symbols-outlined text-[16px] animate-spin" style="animation-duration:1.5s">progress_activity</span>
           Thinking…
         </p>
-        <div class="bg-surface-container-lowest/80 rounded-lg p-md border border-outline-variant overflow-x-auto">
+        <div class="chat-prose hidden font-body-md text-body-md text-on-surface leading-relaxed whitespace-pre-wrap"></div>
+        <div class="prompt-box bg-surface-container-lowest/80 rounded-lg p-md border border-outline-variant overflow-x-auto">
           <div class="prompt-shell">
             <div class="prompt-content font-code text-code text-on-surface-variant whitespace-pre-wrap min-h-[1.25em]"></div>
           </div>
@@ -311,15 +333,18 @@ function applyPromptFormatting(messageEl, rawText, responseKind) {
 
 function finalizeAiMessage(messageEl, content, errorText, responseKind = 'prompt') {
   const codeEl = messageEl.querySelector('.prompt-content');
+  const chatProseEl = messageEl.querySelector('.chat-prose');
   const actionsEl = messageEl.querySelector('.message-actions');
   const thinkingEl = messageEl.querySelector('.thinking-indicator');
 
   if (thinkingEl) thinkingEl.remove();
   if (codeEl) codeEl.classList.remove('streaming-cursor');
+  if (chatProseEl) chatProseEl.classList.remove('streaming-cursor');
 
   if (errorText) {
-    const codeBlock = messageEl.querySelector('.bg-surface-container-lowest\\/80');
-    if (codeBlock) codeBlock.remove();
+    const promptBox = messageEl.querySelector('.prompt-box');
+    if (promptBox) promptBox.remove();
+    if (chatProseEl) chatProseEl.remove();
     const inner = messageEl.querySelector('.flex.flex-col.gap-md');
     if (inner) {
       const errEl = document.createElement('p');
@@ -327,6 +352,19 @@ function finalizeAiMessage(messageEl, content, errorText, responseKind = 'prompt
       errEl.textContent = errorText;
       inner.appendChild(errEl);
     }
+    return;
+  }
+
+  if (responseKind === 'chat') {
+    // Chat response: prose display is already showing; ensure prompt box stays hidden
+    const promptBox = messageEl.querySelector('.prompt-box');
+    if (promptBox) promptBox.classList.add('hidden');
+    if (chatProseEl) {
+      chatProseEl.classList.remove('hidden');
+      if (content != null && content !== '') chatProseEl.textContent = content;
+    }
+    // No action buttons for chat responses
+    scrollToBottom(true);
     return;
   }
 
@@ -346,13 +384,10 @@ function finalizeAiMessage(messageEl, content, errorText, responseKind = 'prompt
       <button onclick="injectFollowUp('Make it more concise and to the point')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">compress</span>More concise
       </button>
-      <button onclick="injectFollowUp('Add constraints on what the AI should never do')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
-        <span class="material-symbols-outlined text-[16px]">block</span>Add constraints
-      </button>
       <button onclick="injectFollowUp('Add [YOUR_*] placeholders for anything still unknown and a short checklist at the top')" class="px-md py-sm rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">edit_note</span>Placeholders
       </button>
-      <button onclick="copyPrompt(this)" data-content="${escapeAttr(content)}" class="px-md py-sm rounded-full glass-panel text-on-surface-variant hover:text-on-surface transition-colors font-label-sm text-label-sm flex items-center gap-xs">
+      <button onclick="copyPrompt(this)" data-content="${escapeAttr(content)}" class="ml-auto px-md py-sm rounded-full glass-panel text-on-surface-variant hover:text-on-surface transition-colors font-label-sm text-label-sm flex items-center gap-xs">
         <span class="material-symbols-outlined text-[16px]">content_copy</span>Copy Prompt
       </button>`;
   }

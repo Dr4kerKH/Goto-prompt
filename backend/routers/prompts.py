@@ -27,6 +27,45 @@ MAX_RECENT_DELTAS = 6
 MAX_DELTA_ITEM_CHARS = 2_000
 MAX_TASK_TEMPLATE_CHARS = 4_000
 
+CHAT_SYSTEM_MESSAGE = """You are Goto-prompt, a prompt engineering assistant. Answer the user's general question helpfully and conversationally. Keep responses clear and concise. Do not produce a prompt document — just answer naturally."""
+
+_CHAT_OPENERS = (
+    "what is ", "what are ", "what's ", "how does ", "how do ",
+    "explain ", "tell me about ", "why is ", "why does ", "why are ",
+    "what's the difference", "difference between", "compare ",
+    "when should ", "should i ", "which is better", "which one",
+    "pros and cons", "advantages of", "disadvantages of",
+    "help me understand", "i'm confused", "what do you think",
+    "can you explain", "can you tell", "hi", "hello", "hey", "how are you",
+)
+
+_PROMPT_CREATION_SIGNALS = (
+    "write a prompt", "create a prompt", "generate a prompt",
+    "make a prompt", "build a prompt", "write me a prompt",
+    "help me write", "help me create", "need a prompt",
+    "improve this prompt", "rewrite this prompt", "edit this prompt",
+    "refine this prompt", "my prompt", "this prompt", "a prompt for",
+    "prompt for my", "prompt that", "system message", "system prompt",
+    "prompt engineering", "write me",
+)
+
+
+def is_general_chat(user_message: str) -> bool:
+    text = user_message.lower().strip()
+    if any(k in text for k in _PROMPT_CREATION_SIGNALS):
+        return False
+    if any(text.startswith(k) for k in _CHAT_OPENERS):
+        return True
+    # Short question not about a task domain
+    words = text.split()
+    if len(words) <= 6 and text.endswith("?") and not any(
+        k in text
+        for k in ("code", "image", "prompt", "generate", "write", "create", "design")
+    ):
+        return True
+    return False
+
+
 SYSTEM_MESSAGE = """You are Goto-prompt: an agent specialized in rewriting and engineering prompts for other LLMs and agents.
 
 Your job is either (1) ask concise clarifying questions when critical details are missing, or (2) produce an improved full prompt document. You never perform the end-user's task yourself — you only shape the instructions another model will follow.
@@ -323,6 +362,21 @@ async def generate_prompt(request: PromptGenerationRequest):
             status_code=503,
             detail="LLM service unavailable",
         )
+
+    if is_general_chat(request.user_message):
+        logger.info("Routing as general chat")
+        chat_messages = [{"role": "user", "content": request.user_message}]
+
+        async def chat_event_stream():
+            yield "data: [META]chat\n\n"
+            try:
+                async for token in stream_with_retry(chat_messages, CHAT_SYSTEM_MESSAGE):
+                    yield f"data: {token}\n\n"
+            except Exception as e:
+                logger.exception("Chat streaming error: %s", e)
+                yield "data: [ERROR] Generation failed\n\n"
+
+        return StreamingResponse(chat_event_stream(), media_type="text/event-stream")
 
     messages, mode, selected_task_type = build_messages(request)
     logger.info("Resolved task template: %s", selected_task_type)
