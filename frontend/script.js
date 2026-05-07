@@ -18,6 +18,87 @@ const state = {
 // ── DOM refs (initialized in DOMContentLoaded to guarantee DOM is ready) ─────
 let chatMessages, chatMain, textarea, sendBtn, micBtn, refreshBtn;
 
+// ── Dot grid background ───────────────────────────────────────────────────────
+function initDotGrid() {
+  const canvas = document.getElementById('dot-grid');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  // Primary color: #4edea3 → rgb(78, 222, 163)
+  const SPACING = 28;
+  const BASE_R  = 1.5;
+  const PEAK_R  = 2.5;
+  const BASE_A  = 0.28;
+  const PEAK_A  = 0.80;
+  const BLOOM   = 160;
+
+  let mx = -9999, my = -9999;
+  let dpr = 1;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    // Keep CSS size at logical pixels so mouse coords stay in sync
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+  }
+
+  function draw() {
+    const w = canvas.width  / dpr;
+    const h = canvas.height / dpr;
+
+    // Solid base
+    ctx.fillStyle = '#0b1326';
+    ctx.fillRect(0, 0, w, h);
+
+    // Radial gradient glow from top-center (mirrors CSS background-image)
+    const grd = ctx.createRadialGradient(w / 2, 0, 0, w / 2, 0, Math.sqrt(w * w / 4 + h * h) * 0.6);
+    grd.addColorStop(0, 'rgb(255, 255, 255)');
+    grd.addColorStop(1, 'rgb(5, 255, 151)');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, w, h);
+
+    const ox = (w % SPACING) * 0.5;
+    const oy = (h % SPACING) * 0.5;
+
+    for (let x = ox; x <= w + SPACING; x += SPACING) {
+      for (let y = oy; y <= h + SPACING; y += SPACING) {
+        const dx = x - mx;
+        const dy = y - my;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        let t = 0;
+        if (dist < BLOOM) {
+          const raw = 1 - dist / BLOOM;
+          t = raw * raw * (3 - 2 * raw); // smoothstep
+        }
+
+        const r = BASE_R + (PEAK_R - BASE_R) * t;
+        const a = BASE_A + (PEAK_A - BASE_A) * t;
+
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(78,222,163,${a.toFixed(3)})`;
+        ctx.fill();
+      }
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  window.addEventListener('mousemove', (e) => { mx = e.clientX; my = e.clientY; });
+  document.addEventListener('mouseleave', () => { mx = -9999; my = -9999; });
+  window.addEventListener('resize', () => { resize(); }, { passive: true });
+
+  resize();
+  draw();
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   chatMessages = document.getElementById('chat-messages');
@@ -27,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
   micBtn       = document.getElementById('mic-btn');
   refreshBtn   = document.getElementById('refresh-btn');
 
+  initDotGrid();
   setupTextarea();
 
   sendBtn.addEventListener('click', handleSend);
