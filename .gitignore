@@ -30,8 +30,16 @@ Thumbs.db
 *.swp
 *.swo
 
-# Claude.md
+# Claude files
+.claude
 CLAUDE.md
 DESIGN.md
 files
 files/*
+
+#Blazor packages
+blazor/*.json
+blazor/**/*.cache
+blazor/obj/*.json
+blazor/obj/*.props
+blazor/obj/**/*.editorconfig

@@ -1,0 +1,7 @@
+#messages-container {
+    scroll-behavior: smooth;
+}
+
+textarea {
+    field-sizing: content;
+}

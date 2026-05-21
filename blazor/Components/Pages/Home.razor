@@ -1,0 +1,220 @@
+@page "/"
+@rendermode InteractiveServer
+@inject ILlmService LlmService
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>goto-prompt</PageTitle>
+
+<!-- dot-grid canvas background -->
+<canvas id="dot-grid" class="fixed inset-0 w-full h-full pointer-events-none opacity-40 z-0"></canvas>
+
+<div class="relative z-10 flex flex-col h-screen max-w-3xl mx-auto px-4">
+
+    <!-- header -->
+    <header class="flex items-center justify-between py-5">
+        <h1 class="text-lg font-semibold tracking-tight text-gray-200">goto-prompt</h1>
+        @if (_messages.Count > 0)
+        {
+            <button @onclick="NewSession"
+                    class="text-xs text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition">
+                New session
+            </button>
+        }
+    </header>
+
+    <!-- message list -->
+    <div id="messages-container" class="flex-1 overflow-y-auto space-y-4 pb-4">
+
+        @if (_messages.Count == 0 && !_streaming)
+        {
+            <div class="flex flex-col items-center justify-center h-full text-center text-gray-600 space-y-2">
+                <p class="text-2xl font-light text-gray-400">What do you want to build?</p>
+                <p class="text-sm">Describe your task and I'll engineer a prompt for it.</p>
+            </div>
+        }
+
+        @foreach (var msg in _messages)
+        {
+            <div class="flex @(msg.Role == "user" ? "justify-end" : "justify-start")">
+                <div class="max-w-2xl rounded-2xl px-4 py-3 @(msg.Role == "user"
+                        ? "bg-indigo-600 text-white"
+                        : "bg-gray-800 text-gray-100 border border-gray-700")">
+                    <pre class="whitespace-pre-wrap font-sans text-sm leading-relaxed">@msg.Content</pre>
+                    @if (msg.IsPrompt)
+                    {
+                        <button @onclick="() => CopyToClipboard(msg.Content)"
+                                class="mt-3 text-xs text-indigo-400 hover:text-indigo-200 transition">
+                            Copy prompt
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_streaming)
+        {
+            <div class="flex justify-start">
+                <div class="max-w-2xl rounded-2xl px-4 py-3 bg-gray-800 border border-gray-700 text-gray-100">
+                    <pre class="whitespace-pre-wrap font-sans text-sm leading-relaxed">@_streamBuffer<span class="inline-block w-0.5 h-4 bg-indigo-400 align-middle animate-pulse ml-0.5"></span></pre>
+                </div>
+            </div>
+        }
+
+    </div>
+
+    <!-- input area -->
+    <div class="py-4 space-y-2">
+        <div class="flex items-center gap-2">
+            <select @bind="_selectedTaskType"
+                    class="bg-gray-800 text-gray-400 text-xs rounded-lg px-3 py-1.5 border border-gray-700 focus:outline-none focus:border-indigo-500 transition">
+                <option value="">Auto-detect type</option>
+                <option value="coding">Coding</option>
+                <option value="design_with_code">Design + Code</option>
+                <option value="format_rewrite">Format / Rewrite</option>
+                <option value="image_generation">Image Generation</option>
+            </select>
+
+            @if (!string.IsNullOrEmpty(_canonicalPrompt))
+            {
+                <span class="text-xs text-gray-600 italic">Refining prompt</span>
+            }
+        </div>
+
+        <div class="flex gap-2 items-end">
+            <textarea @bind="_inputText"
+                      @bind:event="oninput"
+                      @onkeydown="HandleKeyDown"
+                      rows="3"
+                      placeholder="Describe what you want to build... (Shift+Enter for newline)"
+                      disabled="@_streaming"
+                      class="flex-1 bg-gray-800 text-gray-100 rounded-xl px-4 py-3 text-sm resize-none border border-gray-700
+                             focus:outline-none focus:border-indigo-500 placeholder-gray-600 transition
+                             disabled:opacity-50"></textarea>
+
+            <div class="flex flex-col gap-2 pb-0.5">
+                @if (_streaming)
+                {
+                    <button @onclick="Stop"
+                            class="px-4 py-2.5 bg-red-700 hover:bg-red-600 text-white rounded-xl text-sm font-medium transition">
+                        Stop
+                    </button>
+                }
+                else
+                {
+                    <button @onclick="Send"
+                            disabled="@string.IsNullOrWhiteSpace(_inputText)"
+                            class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed
+                                   text-white rounded-xl text-sm font-medium transition">
+                        Send
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+
+</div>
+
+@code {
+    private List<ChatMessage> _messages = [];
+    private string _inputText = string.Empty;
+    private string _streamBuffer = string.Empty;
+    private string? _canonicalPrompt;
+    private List<string> _recentDeltas = [];
+    private string _selectedTaskType = string.Empty;
+    private bool _streaming;
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await JS.InvokeVoidAsync("initDotGrid");
+    }
+
+    private async Task Send()
+    {
+        var text = _inputText.Trim();
+        if (string.IsNullOrEmpty(text) || _streaming) return;
+
+        _inputText = string.Empty;
+        _messages.Add(new ChatMessage("user", text));
+
+        _recentDeltas.Add(text);
+        if (_recentDeltas.Count > 6) _recentDeltas.RemoveAt(0);
+
+        var request = new PromptRequest(
+            UserMessage: text,
+            CanonicalPrompt: _canonicalPrompt,
+            RecentDeltas: [.. _recentDeltas],
+            TaskType: string.IsNullOrEmpty(_selectedTaskType) ? null : _selectedTaskType
+        );
+
+        // Determine upfront whether this stream will produce a prompt or a clarification
+        var mode = ModeClassifier.Classify(text, _canonicalPrompt);
+        var isPromptResponse = mode != PromptMode.Clarify;
+
+        _streamBuffer = string.Empty;
+        _streaming = true;
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            await foreach (var token in LlmService.StreamAsync(request, _cts.Token))
+            {
+                _streamBuffer += token;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            var finalContent = _streamBuffer.Trim();
+            if (isPromptResponse) _canonicalPrompt = finalContent;
+
+            _messages.Add(new ChatMessage("assistant", finalContent, IsPrompt: isPromptResponse));
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            if (!string.IsNullOrEmpty(_streamBuffer))
+                _messages.Add(new ChatMessage("assistant", _streamBuffer.Trim() + " [stopped]"));
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessage("assistant", $"Error: {ex.Message}"));
+        }
+        finally
+        {
+            _streamBuffer = string.Empty;
+            _streaming = false;
+            _cts?.Dispose();
+            _cts = null;
+            await InvokeAsync(StateHasChanged);
+            await JS.InvokeVoidAsync("scrollToBottom", "messages-container");
+        }
+    }
+
+    private void Stop() => _cts?.Cancel();
+
+    private void NewSession()
+    {
+        _canonicalPrompt = null;
+        _recentDeltas.Clear();
+        _messages.Clear();
+        _streamBuffer = string.Empty;
+        _streaming = false;
+        _cts?.Cancel();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await Send();
+    }
+
+    private async Task CopyToClipboard(string text) =>
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        try { await JS.InvokeVoidAsync("window._dotGridCleanup"); } catch { }
+    }
+}
